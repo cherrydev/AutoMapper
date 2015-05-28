@@ -16,7 +16,7 @@ namespace AutoMapper
         private readonly ITypeMapFactory _typeMapFactory;
         private readonly IEnumerable<IObjectMapper> _mappers;
         internal const string DefaultProfileName = "";
-
+        private readonly List<TypePair> _orderedTypePairs = new List<TypePair>();
         private readonly IDictionary<TypePair, TypeMap> _typeMaps = DictionaryFactory.CreateDictionary<TypePair, TypeMap>();
         private readonly IDictionary<TypePair, TypeMap> _typeMapCache = DictionaryFactory.CreateDictionary<TypePair, TypeMap>();
         private readonly IDictionary<TypePair, CreateTypeMapExpression> _typeMapExpressionCache = DictionaryFactory.CreateDictionary<TypePair, CreateTypeMapExpression>();
@@ -196,6 +196,22 @@ namespace AutoMapper
             }
         }
 
+        private void ReorderTypePairs()
+        {
+            var getDepth = new Func<TypePair, int>(pair =>
+            {
+                var src = pair.SourceType;
+                var depth = 0;
+                while (src != null)
+                {
+                    depth++;
+                    src = src.BaseType;
+                }
+                return depth;
+            });
+            _orderedTypePairs.Sort((pair1, pair2) => getDepth(pair2).CompareTo(getDepth(pair1)));
+        }
+
         private IEnumerable<TypeMap> GetDerivedTypeMaps(TypeMap typeMap)
         {
             if (typeMap == null)
@@ -312,6 +328,9 @@ namespace AutoMapper
 
                 OnTypeMapCreated(tm);
 
+                _orderedTypePairs.Add(new TypePair(tm.SourceType, tm.DestinationType));
+                ReorderTypePairs();
+
                 return tm;
             });
 
@@ -334,10 +353,19 @@ namespace AutoMapper
         public TypeMap FindTypeMapFor(Type sourceType, Type destinationType)
         {
             var typePair = new TypePair(sourceType, destinationType);
-
-            var typeMap = _typeMapCache.GetOrAdd(typePair, _ => GetRelatedTypePairs(_).Select(FindTypeMapFor).FirstOrDefault(tm => tm != null));
-
+            var typeMap = _typeMapCache.GetOrAdd(typePair, _ => FindCompatibleTypeMap(typePair));
             return typeMap;
+        }
+
+        private TypeMap FindCompatibleTypeMap(TypePair targetPair)
+        {
+            var typePair =
+                _orderedTypePairs.FirstOrDefault(
+                    x =>
+                        x.SourceType.IsAssignableFrom(targetPair.SourceType)
+                        && targetPair.DestinationType.IsAssignableFrom(x.DestinationType));
+            if (typePair == null) return null;
+            return _typeMaps[typePair];
         }
 
         public TypeMap FindTypeMapFor(object source, object destination, Type sourceType, Type destinationType)
